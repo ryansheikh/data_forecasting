@@ -242,3 +242,4 @@ elif page == "Product Forecast & Sales Planning":
         "to products using historical contribution. Sales are calculated "
         "using user-defined product price."
     )
+
