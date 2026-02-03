@@ -10,14 +10,15 @@ from statsmodels.tsa.statespace.sarimax import SARIMAX
 # PAGE CONFIG
 # ==================================================
 st.set_page_config(
-    page_title="Product Sales Forecasting Dashboard",
+    page_title="Pharma Analytics & Forecasting",
     layout="wide"
 )
 
-st.title("Product-Level Sales Forecasting Dashboard")
-st.caption("Unit-based forecasting with product-specific price scenarios")
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+st.title("Pharma Sales Analytics & Forecasting Dashboard")
+st.caption(
+    "Complete analytics, ML engineering, unit forecasting, "
+    "and product-wise sales planning"
+)
 
 # ==================================================
 # LOAD DATA
@@ -25,10 +26,10 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 @st.cache_data
 def load_data():
     monthly_sales = pd.read_csv("cleaned_monthly_sales.csv")
-    product_sales = pd.read_csv("cleaned_monthly_product_sales.csv")
-    return monthly_sales, product_sales
+    monthly_product_sales = pd.read_csv("cleaned_monthly_product_sales.csv")
+    return monthly_sales, monthly_product_sales
 
-monthly_sales, product_sales = load_data()
+monthly_sales, monthly_product_sales = load_data()
 
 # ==================================================
 # SIDEBAR
@@ -37,20 +38,49 @@ st.sidebar.title("Navigation")
 page = st.sidebar.radio(
     "Select Section",
     [
-        "Product Sales Forecast"
+        "Executive Analysis",
+        "Units Forecast (Company)",
+        "Product Forecast & Sales Planning"
     ]
 )
 
 # ==================================================
-# PRODUCT SALES FORECAST
+# EXECUTIVE ANALYSIS (ANALYTICS PART)
 # ==================================================
-if page == "Product Sales Forecast":
+if page == "Executive Analysis":
 
-    st.subheader("Product-Wise Sales Forecast (Price Adjustable)")
+    df = monthly_sales.copy()
+    df["MonthStart"] = pd.to_datetime(
+        df["Year"].astype(str) + "-" + df["Month"].astype(str) + "-01"
+    )
+    df = df.sort_values("MonthStart")
 
-    # -----------------------------
-    # PREPARE COMPANY UNITS SERIES
-    # -----------------------------
+    # KPIs
+    latest = df.iloc[-1]
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Latest Units", round(latest["TotalUnits"], 2))
+    c2.metric("Latest Sales", round(latest["TotalSales"], 2))
+    c3.metric("Avg Monthly Units", round(df["TotalUnits"].mean(), 2))
+
+    st.subheader("Historical Units Trend")
+
+    fig = px.line(
+        df,
+        x="MonthStart",
+        y="TotalUnits",
+        markers=True,
+        title="Monthly Units Sold (Actual)",
+        labels={"MonthStart": "Month", "TotalUnits": "Units"}
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+# ==================================================
+# UNITS FORECAST (COMPANY LEVEL - ML ENGINEERING)
+# ==================================================
+elif page == "Units Forecast (Company)":
+
+    st.subheader("Company-Level Units Forecast (ML Based)")
+
     df = monthly_sales.copy()
     df["MonthStart"] = pd.to_datetime(
         df["Year"].astype(str) + "-" + df["Month"].astype(str) + "-01"
@@ -60,9 +90,7 @@ if page == "Product Sales Forecast":
 
     ts = df.set_index("MonthStart")["TotalUnits"].asfreq("MS").fillna(0)
 
-    # -----------------------------
     # SARIMA MODEL
-    # -----------------------------
     model = SARIMAX(
         ts,
         order=(1, 1, 1),
@@ -72,21 +100,86 @@ if page == "Product Sales Forecast":
     )
     res = model.fit(disp=False)
 
-    horizon = st.slider("Forecast months", 3, 6, 6)
+    horizon = st.slider("Forecast Months", 3, 6, 6)
 
     forecast = res.get_forecast(steps=horizon).summary_frame()
-    forecast_units = forecast["mean"]
+    forecast_units = forecast["mean"].round(2)
+
+    # Prepare chart data
+    hist_df = ts.reset_index()
+    hist_df.columns = ["Month", "Actual Units"]
+
+    fc_df = forecast_units.reset_index()
+    fc_df.columns = ["Month", "Predicted Units"]
+
+    st.subheader("Actual vs Predicted Units")
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=hist_df["Month"],
+        y=hist_df["Actual Units"],
+        name="Actual Units",
+        mode="lines+markers"
+    ))
+    fig.add_trace(go.Scatter(
+        x=fc_df["Month"],
+        y=fc_df["Predicted Units"],
+        name="Predicted Units",
+        mode="lines+markers"
+    ))
+
+    fig.update_layout(
+        xaxis_title="Month",
+        yaxis_title="Units",
+        title="Company-Level Units Forecast"
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.dataframe(
+        fc_df.rename(columns={"Predicted Units": "Forecasted Units"}),
+        use_container_width=True
+    )
+
+# ==================================================
+# PRODUCT FORECAST + SALES PLANNING
+# ==================================================
+elif page == "Product Forecast & Sales Planning":
+
+    st.subheader("Product-Level Units & Sales Forecast")
 
     # -----------------------------
-    # PRODUCT SHARE CALCULATION
+    # COMPANY UNITS FORECAST
     # -----------------------------
-    product_sales["UnitsSold"] = pd.to_numeric(
-        product_sales["UnitsSold"], errors="coerce"
+    df = monthly_sales.copy()
+    df["MonthStart"] = pd.to_datetime(
+        df["Year"].astype(str) + "-" + df["Month"].astype(str) + "-01"
+    )
+    df = df.sort_values("MonthStart")
+    ts = df.set_index("MonthStart")["TotalUnits"].asfreq("MS").fillna(0)
+
+    model = SARIMAX(
+        ts,
+        order=(1, 1, 1),
+        seasonal_order=(1, 1, 1, 12),
+        enforce_stationarity=False,
+        enforce_invertibility=False
+    )
+    res = model.fit(disp=False)
+
+    horizon = st.slider("Forecast Months ", 3, 6, 6)
+    forecast_units = res.get_forecast(steps=horizon).summary_frame()["mean"]
+
+    # -----------------------------
+    # PRODUCT SHARE
+    # -----------------------------
+    monthly_product_sales["UnitsSold"] = pd.to_numeric(
+        monthly_product_sales["UnitsSold"], errors="coerce"
     ).fillna(0)
 
     product_share = (
-        product_sales.groupby("ProductName")["UnitsSold"].sum()
-        / product_sales["UnitsSold"].sum()
+        monthly_product_sales.groupby("ProductName")["UnitsSold"].sum()
+        / monthly_product_sales["UnitsSold"].sum()
     )
 
     # -----------------------------
@@ -97,8 +190,7 @@ if page == "Product Sales Forecast":
         sorted(product_share.index.tolist())
     )
 
-    # Product-specific units forecast
-    product_units = forecast_units * product_share[selected_product]
+    product_units = (forecast_units * product_share[selected_product]).round(2)
 
     # -----------------------------
     # PRICE INPUT
@@ -110,45 +202,43 @@ if page == "Product Sales Forecast":
         step=0.10
     )
 
-    # -----------------------------
-    # SALES CALCULATION
-    # -----------------------------
-    sales = product_units * price
+    product_sales = (product_units * price).round(2)
 
     result = pd.DataFrame({
         "Month": product_units.index.strftime("%Y-%m"),
-        "Predicted Units": product_units.round(2),
-        "Expected Sales": sales.round(2)
+        "Predicted Units": product_units.values,
+        "Expected Sales": product_sales.values
     })
 
-    st.subheader("Predicted Units & Expected Sales (Product-Specific)")
+    st.subheader("Product-Level Prediction Output")
     st.dataframe(result, use_container_width=True)
 
     # -----------------------------
-    # SIMPLE VISUALS (EASY TO EXPLAIN)
+    # SIMPLE VISUALS
     # -----------------------------
     col1, col2 = st.columns(2)
 
     with col1:
-        fig_units = px.line(
+        fig1 = px.line(
             result,
             x="Month",
             y="Predicted Units",
             markers=True,
             title="Predicted Units (Product Level)"
         )
-        st.plotly_chart(fig_units, use_container_width=True)
+        st.plotly_chart(fig1, use_container_width=True)
 
     with col2:
-        fig_sales = px.bar(
+        fig2 = px.bar(
             result,
             x="Month",
             y="Expected Sales",
             title="Expected Sales (Based on Entered Price)"
         )
-        st.plotly_chart(fig_sales, use_container_width=True)
+        st.plotly_chart(fig2, use_container_width=True)
 
     st.caption(
-        "Note: Units are forecasted using historical seasonality. "
-        "Sales are calculated by multiplying forecasted units with user-entered product price."
+        "Units are forecasted using SARIMA at company level and distributed "
+        "to products using historical contribution. Sales are calculated "
+        "using user-defined product price."
     )
