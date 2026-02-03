@@ -198,7 +198,7 @@ elif page == "Forecast Units":
     fc_plot = out.reset_index().rename(columns={"index":"Date"})
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=hist["MonthStart"], y=hist["TotalUnits"], name="Actual Units"))
+    fig.add_trace(go.Scatter(x=hist["Date"], y=hist["Units"], name="Actual Units"))
     fig.add_trace(go.Scatter(x=fc_plot["Date"], y=fc_plot["Predicted_Units"], name="Forecast Units"))
     fig.add_trace(go.Scatter(
         x=fc_plot["Date"],
@@ -325,3 +325,4 @@ elif page == "Dimension Drilldown":
     summary = df.groupby("BrickName", as_index=False)["Revenue"].sum().sort_values("Revenue", ascending=False)
     fig = px.bar(summary, x="Revenue", y="BrickName", orientation="h", title="Revenue by Brick")
     st.plotly_chart(fig, use_container_width=True)
+
