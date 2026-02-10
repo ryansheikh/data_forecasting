@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 import numpy as np
 import streamlit as st
@@ -16,15 +17,30 @@ st.caption(
 )
 
 # ==================================================
-# LOAD DATA
+# CACHE CONTROL (🔥 FIX)
+# ==================================================
+if st.sidebar.button("🔄 Refresh Data (Clear Cache)"):
+    st.cache_data.clear()
+    st.rerun()
+
+def file_signature(path):
+    return os.path.getmtime(path)
+
+sig_monthly_sales = file_signature("cleaned_monthly_sales.csv")
+sig_monthly_product_sales = file_signature("cleaned_monthly_product_sales.csv")
+
+# ==================================================
+# LOAD DATA (CACHE-SAFE)
 # ==================================================
 @st.cache_data
-def load_data():
+def load_data(sig1, sig2):
     ms = pd.read_csv("cleaned_monthly_sales.csv")
     mps = pd.read_csv("cleaned_monthly_product_sales.csv")
     return ms, mps
 
-monthly_sales, monthly_product_sales = load_data()
+monthly_sales, monthly_product_sales = load_data(
+    sig_monthly_sales, sig_monthly_product_sales
+)
 
 # ==================================================
 # SIDEBAR
@@ -75,7 +91,6 @@ elif page == "Units Forecast (Company)":
 
     ts = df.set_index("MonthStart")["TotalUnits"]
 
-    # 🔥 FIX: complete monthly index
     full_index = pd.date_range(
         start=ts.index.min(),
         end=ts.index.max(),
@@ -113,7 +128,11 @@ elif page == "Units Forecast (Company)":
     fig.add_trace(go.Scatter(x=hist_df["Month"], y=hist_df["Actual Units"], name="Actual"))
     fig.add_trace(go.Scatter(x=fc_df["Month"], y=fc_df["Predicted Units"], name="Forecast"))
 
-    fig.update_layout(title="Company-Level Units Forecast", xaxis_title="Month", yaxis_title="Units")
+    fig.update_layout(
+        title="Company-Level Units Forecast",
+        xaxis_title="Month",
+        yaxis_title="Units"
+    )
     st.plotly_chart(fig, use_container_width=True)
 
     st.dataframe(fc_df, use_container_width=True)
@@ -156,14 +175,12 @@ elif page == "Product Forecast & Sales Planning":
     ).fillna(0)
 
     product_totals = monthly_product_sales.groupby("ProductName")["UnitsSold"].sum()
-
-    product_share = product_totals / product_totals.sum()
-    product_share = product_share.fillna(0).clip(lower=0)
+    product_share = (product_totals / product_totals.sum()).fillna(0).clip(lower=0)
 
     selected_product = st.selectbox("Select Product", sorted(product_share.index))
 
-    product_units = forecast_units * product_share[selected_product]
-    product_units = np.maximum(product_units, 0).round(2)
+    product_units = (forecast_units * product_share[selected_product]).round(2)
+    product_units = np.maximum(product_units, 0)
 
     price = st.number_input(
         f"Enter price per unit for {selected_product}",
@@ -186,15 +203,24 @@ elif page == "Product Forecast & Sales Planning":
 
     with col1:
         st.plotly_chart(
-            px.line(result, x="Month", y="Predicted Units", markers=True,
-                    title="Predicted Units (Selected Product)"),
+            px.line(
+                result,
+                x="Month",
+                y="Predicted Units",
+                markers=True,
+                title="Predicted Units (Selected Product)"
+            ),
             use_container_width=True
         )
 
     with col2:
         st.plotly_chart(
-            px.bar(result, x="Month", y="Expected Sales",
-                   title="Expected Sales (Based on Price)"),
+            px.bar(
+                result,
+                x="Month",
+                y="Expected Sales",
+                title="Expected Sales (Based on Price)"
+            ),
             use_container_width=True
         )
 
@@ -202,3 +228,4 @@ elif page == "Product Forecast & Sales Planning":
         "Forecast starts from Feb 2026 (first unseen month). "
         "Units are constrained to be non-negative and distributed using historical product contribution."
     )
+
