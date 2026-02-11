@@ -17,6 +17,18 @@ st.caption(
 )
 
 # ==================================================
+# NUMBER FORMAT FIX (🔥 KPI CLEAN FORMAT)
+# ==================================================
+def format_number(value):
+    value = float(value)
+    if abs(value) >= 1_000_000:
+        return f"{value/1_000_000:.2f}M"
+    elif abs(value) >= 1_000:
+        return f"{value/1_000:.2f}K"
+    else:
+        return f"{value:.2f}"
+
+# ==================================================
 # CACHE CONTROL (🔥 FIX)
 # ==================================================
 if st.sidebar.button("🔄 Refresh Data (Clear Cache)"):
@@ -65,9 +77,9 @@ if page == "Executive Analysis":
     latest = df.iloc[-1]
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Latest Units", round(latest["TotalUnits"], 2))
-    c2.metric("Latest Sales", round(latest["TotalSales"], 2))
-    c3.metric("Avg Monthly Units", round(df["TotalUnits"].mean(), 2))
+    c1.metric("Latest Units", format_number(latest["TotalUnits"]))
+    c2.metric("Latest Sales", format_number(latest["TotalSales"]))
+    c3.metric("Avg Monthly Units", format_number(df["TotalUnits"].mean()))
 
     fig = px.line(
         df,
@@ -228,4 +240,3 @@ elif page == "Product Forecast & Sales Planning":
         "Forecast starts from Feb 2026 (first unseen month). "
         "Units are constrained to be non-negative and distributed using historical product contribution."
     )
-
