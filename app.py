@@ -1,21 +1,20 @@
-
 import os
-import numpy as np
 import pandas as pd
+import numpy as np
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
+from statsmodels.tsa.statespace.sarimax import SARIMAX
 
 # ==================================================
 # PAGE CONFIG
 # ==================================================
-st.set_page_config(
-    page_title="Pharmevo Sales Analytics",
-    layout="wide"
-)
+st.set_page_config(page_title="Pharma Analytics & Forecasting", layout="wide")
 
-st.title("Pharmevo Sales Analytics Dashboard")
-st.caption("Executive-level analytics built on aggregated SQL Server data")
+st.title("Pharma Sales Analytics & Forecasting Dashboard")
+st.caption(
+    "Analytics, unit-based demand forecasting, and product-wise sales planning"
+)
 
 # ==================================================
 # CACHE CONTROL (🔥 FIX)
@@ -27,278 +26,205 @@ if st.sidebar.button("🔄 Refresh Data (Clear Cache)"):
 def file_signature(path):
     return os.path.getmtime(path)
 
+sig_monthly_sales = file_signature("cleaned_monthly_sales.csv")
+sig_monthly_product_sales = file_signature("cleaned_monthly_product_sales.csv")
+
 # ==================================================
-# DATA LOADING
+# LOAD DATA (CACHE-SAFE)
 # ==================================================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-FILE_MAP = {
-    "monthly_sales": "cleaned_monthly_sales.csv",
-    "monthly_product_sales": "cleaned_monthly_product_sales.csv",
-    "top_products": "cleaned_top_products.csv",
-    "distributor_performance": "cleaned_distributor_performance.csv",
-    "client_type_analysis": "cleaned_client_type_analysis.csv",
-    "bonus_discount_monthly": "cleaned_bonus_discount_monthly.csv",
-    "dimension_summary": "cleaned_dimension_summary.csv",
-    "monthly_client_type_sales": "cleaned_monthly_client_type_sales.csv",
-    "price_sensitivity": "cleaned_price_sensitivity.csv",
-    "seasonality_monthly_avg": "cleaned_seasonality_monthly_avg.csv",
-}
-
-NUMERIC_COLUMNS = {
-    "TotalUnits", "TotalBonus", "TotalDiscount", "TotalSales",
-    "UnitsSold", "Revenue", "TotalClients",
-    "AvgSellingPrice", "AvgMonthlySales"
-}
-
-# create file signature so cache auto-refreshes when CSV updates
-sig = tuple(file_signature(os.path.join(BASE_DIR, f)) for f in FILE_MAP.values())
-
 @st.cache_data
-def load_data(sig):
-    data = {}
-    for key, fname in FILE_MAP.items():
-        path = os.path.join(BASE_DIR, fname)
-        if not os.path.exists(path):
-            st.error(f"Missing dataset: {fname}")
-            st.stop()
+def load_data(sig1, sig2):
+    ms = pd.read_csv("cleaned_monthly_sales.csv")
+    mps = pd.read_csv("cleaned_monthly_product_sales.csv")
+    return ms, mps
 
-        df = pd.read_csv(path)
-
-        for col in df.columns:
-            if col in NUMERIC_COLUMNS:
-                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-
-        if "Year" in df.columns and "Month" in df.columns:
-            df["MonthStart"] = pd.to_datetime(
-                df["Year"].astype(str) + "-" + df["Month"].astype(str) + "-01"
-            )
-
-        data[key] = df
-
-    return data
-
-data = load_data(sig)
+monthly_sales, monthly_product_sales = load_data(
+    sig_monthly_sales, sig_monthly_product_sales
+)
 
 # ==================================================
 # SIDEBAR
 # ==================================================
-st.sidebar.header("Navigation")
+st.sidebar.title("Navigation")
 page = st.sidebar.radio(
-    "Select View",
-    [
-        "Executive Overview",
-        "Product Performance",
-        "Distributor Performance",
-        "Client Analysis",
-        "Promotion Impact",
-        "Seasonality & Cycles",
-        "Pricing Analysis",
-        "Dimension Drilldown"
-    ]
+    "Select Section",
+    ["Executive Analysis", "Units Forecast (Company)", "Product Forecast & Sales Planning"]
 )
 
 # ==================================================
-# EXECUTIVE OVERVIEW
+# EXECUTIVE ANALYSIS
 # ==================================================
-if page == "Executive Overview":
-    df = data["monthly_sales"].sort_values("MonthStart").copy()
-    df["MoM_Growth"] = df["TotalSales"].pct_change() * 100
-    df["Rolling_3M"] = df["TotalSales"].rolling(3).mean()
+if page == "Executive Analysis":
+
+    df = monthly_sales.copy()
+    df["MonthStart"] = pd.to_datetime(
+        df["Year"].astype(str) + "-" + df["Month"].astype(str) + "-01"
+    )
+    df = df.sort_values("MonthStart")
 
     latest = df.iloc[-1]
-    prev = df.iloc[-2] if len(df) > 1 else latest
-
-    k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric(
-        "Latest Sales",
-        latest["TotalSales"],
-        f"{((latest['TotalSales']-prev['TotalSales'])/prev['TotalSales']*100):.2f}%"
-        if prev["TotalSales"] else None
-    )
-    k2.metric("Latest Units", latest["TotalUnits"])
-    k3.metric("Avg Monthly Sales", df["TotalSales"].mean())
-    k4.metric("Best Month Sales", df["TotalSales"].max())
-    k5.metric("Worst Month Sales", df["TotalSales"].min())
-
-    st.subheader("Sales Trend with Rolling Average")
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df["MonthStart"], y=df["TotalSales"], name="Sales"))
-    fig.add_trace(go.Scatter(x=df["MonthStart"], y=df["Rolling_3M"], name="3M Rolling Avg"))
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.subheader("Month-on-Month Growth")
-    fig2 = px.bar(df, x="MonthStart", y="MoM_Growth")
-    st.plotly_chart(fig2, use_container_width=True)
-
-# ==================================================
-# PRODUCT PERFORMANCE
-# ==================================================
-elif page == "Product Performance":
-    top = data["top_products"].sort_values("Revenue", ascending=False)
-    total_rev = top["Revenue"].sum()
-    top["Share"] = top["Revenue"] / total_rev * 100
-
-    k1, k2 = st.columns(2)
-    k1.metric("Top 10 Products Share", f"{top.head(10)['Share'].sum():.2f}%")
-    k2.metric("Top 20 Products Share", f"{top.head(20)['Share'].sum():.2f}%")
-
-    st.subheader("Top Products by Revenue")
-    fig = px.bar(top.head(20), x="Revenue", y="ProductName", orientation="h")
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.subheader("Product Revenue Trend")
-    mps = data["monthly_product_sales"]
-    products = sorted(mps["ProductName"].unique())
-    selected = st.multiselect("Select Products", products, default=products[:1])
-
-    if selected:
-        fig2 = px.line(
-            mps[mps["ProductName"].isin(selected)],
-            x="MonthStart",
-            y="Revenue",
-            color="ProductName",
-            markers=True
-        )
-        st.plotly_chart(fig2, use_container_width=True)
-
-# ==================================================
-# DISTRIBUTOR PERFORMANCE
-# ==================================================
-elif page == "Distributor Performance":
-    dist = data["distributor_performance"].sort_values("Revenue", ascending=False)
-    dist["Share"] = dist["Revenue"] / dist["Revenue"].sum() * 100
-    dist["CumShare"] = dist["Share"].cumsum()
-
-    st.subheader("Top Distributors")
-    fig = px.bar(dist.head(30), x="Revenue", y="DistributorName", orientation="h")
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.subheader("Distributor Revenue Concentration")
-    fig2 = go.Figure()
-    fig2.add_trace(go.Bar(y=dist["Share"], name="Revenue Share"))
-    fig2.add_trace(go.Scatter(y=dist["CumShare"], name="Cumulative Share"))
-    st.plotly_chart(fig2, use_container_width=True)
-
-# ==================================================
-# CLIENT ANALYSIS
-# ==================================================
-elif page == "Client Analysis":
-    ct = data["client_type_analysis"]
-
-    k1, k2 = st.columns(2)
-    k1.metric("Total Client Types", ct["ClientType"].nunique())
-    k2.metric(
-        "Highest Revenue Client Type",
-        ct.sort_values("Revenue", ascending=False).iloc[0]["ClientType"]
-    )
-
-    fig = px.pie(ct, names="ClientType", values="Revenue")
-    st.plotly_chart(fig, use_container_width=True)
-
-    mct = data["monthly_client_type_sales"]
-    fig2 = px.line(mct, x="MonthStart", y="Revenue", color="ClientType", markers=True)
-    st.plotly_chart(fig2, use_container_width=True)
-
-# ==================================================
-# PROMOTION IMPACT
-# ==================================================
-elif page == "Promotion Impact":
-    promo = data["bonus_discount_monthly"]
-    sales = data["monthly_sales"][["MonthStart", "TotalSales"]]
-
-    merged = promo.merge(sales, on="MonthStart")
-    merged["Promo_Total"] = merged["TotalBonus"] + merged["TotalDiscount"]
-
-    k1, k2 = st.columns(2)
-    k1.metric("Avg Monthly Promotion", merged["Promo_Total"].mean())
-    k2.metric(
-        "Promotion to Sales Ratio",
-        f"{(merged['Promo_Total'].sum()/merged['TotalSales'].sum())*100:.2f}%"
-    )
-
-    fig = px.line(
-        merged,
-        x="MonthStart",
-        y=["TotalBonus", "TotalDiscount"],
-        markers=True
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-    fig2 = px.scatter(merged, x="Promo_Total", y="TotalSales")
-    st.plotly_chart(fig2, use_container_width=True)
-
-# ==================================================
-# SEASONALITY & CYCLES
-# ==================================================
-elif page == "Seasonality & Cycles":
-    sea = data["seasonality_monthly_avg"]
-
-    fig = px.bar(sea, x="Month", y="AvgMonthlySales")
-    st.plotly_chart(fig, use_container_width=True)
-
-    df = data["monthly_sales"]
-    heat = df.pivot_table(
-        index="Year", columns="Month", values="TotalSales", aggfunc="sum"
-    )
-    fig2 = px.imshow(heat, aspect="auto")
-    st.plotly_chart(fig2, use_container_width=True)
-
-# ==================================================
-# PRICING ANALYSIS
-# ==================================================
-elif page == "Pricing Analysis":
-    price = data["price_sensitivity"]
-
-    fig = px.bar(
-        price.sort_values("AvgSellingPrice", ascending=False).head(30),
-        x="AvgSellingPrice",
-        y="ProductName",
-        orientation="h"
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-    fig2 = px.scatter(
-        price,
-        x="AvgSellingPrice",
-        y="TotalUnits",
-        hover_data=["ProductName"]
-    )
-    st.plotly_chart(fig2, use_container_width=True)
-
-# ==================================================
-# DIMENSION DRILLDOWN
-# ==================================================
-elif page == "Dimension Drilldown":
-    dim = data["dimension_summary"]
 
     c1, c2, c3 = st.columns(3)
-    with c1:
-        distributor = st.selectbox(
-            "Distributor", ["All"] + sorted(dim["DistributorName"].unique())
-        )
-    with c2:
-        client_type = st.selectbox(
-            "Client Type", ["All"] + sorted(dim["ClientType"].unique())
-        )
-    with c3:
-        team = st.selectbox(
-            "Team", ["All"] + sorted(dim["TeamName"].unique())
-        )
+    c1.metric("Latest Units", round(latest["TotalUnits"], 2))
+    c2.metric("Latest Sales", round(latest["TotalSales"], 2))
+    c3.metric("Avg Monthly Units", round(df["TotalUnits"].mean(), 2))
 
-    df = dim.copy()
-    if distributor != "All":
-        df = df[df["DistributorName"] == distributor]
-    if client_type != "All":
-        df = df[df["ClientType"] == client_type]
-    if team != "All":
-        df = df[df["TeamName"] == team]
+    fig = px.line(
+        df,
+        x="MonthStart",
+        y="TotalUnits",
+        markers=True,
+        title="Monthly Units Sold (Historical)"
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
-    summary = (
-        df.groupby("BrickName", as_index=False)["Revenue"]
-        .sum()
-        .sort_values("Revenue", ascending=False)
+# ==================================================
+# COMPANY LEVEL FORECAST
+# ==================================================
+elif page == "Units Forecast (Company)":
+
+    df = monthly_sales.copy()
+    df["MonthStart"] = pd.to_datetime(
+        df["Year"].astype(str) + "-" + df["Month"].astype(str) + "-01"
+    )
+    df = df.sort_values("MonthStart")
+
+    ts = df.set_index("MonthStart")["TotalUnits"]
+
+    full_index = pd.date_range(
+        start=ts.index.min(),
+        end=ts.index.max(),
+        freq="MS"
+    )
+    ts = ts.reindex(full_index)
+    ts = ts.interpolate(method="linear")
+
+    model = SARIMAX(
+        ts,
+        order=(1, 1, 1),
+        seasonal_order=(1, 1, 1, 12),
+        enforce_stationarity=False,
+        enforce_invertibility=False
+    )
+    res = model.fit(disp=False)
+
+    horizon = st.slider("Forecast Months", 3, 6, 6)
+
+    forecast_units = (
+        res.get_forecast(steps=horizon)
+        .summary_frame()["mean"]
+        .abs()
+        .clip(lower=0)
+        .round(2)
     )
 
-    fig = px.bar(summary, x="Revenue", y="BrickName", orientation="h")
+    hist_df = ts.reset_index()
+    hist_df.columns = ["Month", "Actual Units"]
+
+    fc_df = forecast_units.reset_index()
+    fc_df.columns = ["Month", "Predicted Units"]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=hist_df["Month"], y=hist_df["Actual Units"], name="Actual"))
+    fig.add_trace(go.Scatter(x=fc_df["Month"], y=fc_df["Predicted Units"], name="Forecast"))
+
+    fig.update_layout(
+        title="Company-Level Units Forecast",
+        xaxis_title="Month",
+        yaxis_title="Units"
+    )
     st.plotly_chart(fig, use_container_width=True)
+
+    st.dataframe(fc_df, use_container_width=True)
+
+# ==================================================
+# PRODUCT FORECAST & SALES
+# ==================================================
+elif page == "Product Forecast & Sales Planning":
+
+    df = monthly_sales.copy()
+    df["MonthStart"] = pd.to_datetime(
+        df["Year"].astype(str) + "-" + df["Month"].astype(str) + "-01"
+    )
+    df = df.sort_values("MonthStart")
+
+    ts = df.set_index("MonthStart")["TotalUnits"]
+
+    full_index = pd.date_range(ts.index.min(), ts.index.max(), freq="MS")
+    ts = ts.reindex(full_index).interpolate(method="linear")
+
+    model = SARIMAX(
+        ts,
+        order=(1, 1, 1),
+        seasonal_order=(1, 1, 1, 12),
+        enforce_stationarity=False,
+        enforce_invertibility=False
+    )
+    res = model.fit(disp=False)
+
+    horizon = st.slider("Forecast Months ", 3, 6, 6)
+    forecast_units = (
+        res.get_forecast(steps=horizon)
+        .summary_frame()["mean"]
+        .abs()
+        .clip(lower=0)
+    )
+
+    monthly_product_sales["UnitsSold"] = pd.to_numeric(
+        monthly_product_sales["UnitsSold"], errors="coerce"
+    ).fillna(0)
+
+    product_totals = monthly_product_sales.groupby("ProductName")["UnitsSold"].sum()
+    product_share = (product_totals / product_totals.sum()).fillna(0).clip(lower=0)
+
+    selected_product = st.selectbox("Select Product", sorted(product_share.index))
+
+    product_units = (forecast_units * product_share[selected_product]).round(2)
+    product_units = np.maximum(product_units, 0)
+
+    price = st.number_input(
+        f"Enter price per unit for {selected_product}",
+        min_value=0.0,
+        value=1.00,
+        step=0.10
+    )
+
+    product_sales = (product_units * price).round(2)
+
+    result = pd.DataFrame({
+        "Month": product_units.index.strftime("%Y-%m"),
+        "Predicted Units": product_units.values,
+        "Expected Sales": product_sales.values
+    })
+
+    st.dataframe(result, use_container_width=True)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.plotly_chart(
+            px.line(
+                result,
+                x="Month",
+                y="Predicted Units",
+                markers=True,
+                title="Predicted Units (Selected Product)"
+            ),
+            use_container_width=True
+        )
+
+    with col2:
+        st.plotly_chart(
+            px.bar(
+                result,
+                x="Month",
+                y="Expected Sales",
+                title="Expected Sales (Based on Price)"
+            ),
+            use_container_width=True
+        )
+
+    st.caption(
+        "Forecast starts from Feb 2026 (first unseen month). "
+        "Units are constrained to be non-negative and distributed using historical product contribution."
+    )
